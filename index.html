@@ -1,0 +1,1506 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Киношка — Заказ билетов</title>
+  
+  <!-- Библиотеки QR-кодов -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
+  <script src="https://unpkg.com/html5-qrcode"></script>
+
+  <!-- Подключение Google Firebase (Firestore) -->
+  <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-app.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-firestore.js"></script>
+
+  <style>
+    :root {
+      --bg: #121214;
+      --card: #1e1e24;
+      --primary: #e50914;
+      --accent: #22c55e;
+      --text: #ffffff;
+      --muted: #a0a0a8;
+      --border: #2d2d35;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
+    body { background-color: var(--bg); color: var(--text); padding-bottom: 75px; }
+
+    header { background: #1a1a1e; padding: 16px; text-align: center; border-bottom: 1px solid var(--border); position: relative; }
+    header h1 { color: var(--primary); font-size: 22px; font-weight: 800; }
+    header p { color: var(--muted); font-size: 12px; margin-top: 2px; }
+    .admin-link { position: absolute; right: 16px; top: 18px; color: var(--muted); font-size: 22px; cursor: pointer; }
+    
+    .admin-banner { background: #e50914; color: white; text-align: center; padding: 6px; font-size: 12px; font-weight: 700; letter-spacing: 1px; display: none; }
+
+    nav { position: fixed; bottom: 0; left: 0; right: 0; background: #1a1a1e; display: flex; border-top: 1px solid var(--border); z-index: 100; }
+    nav button { flex: 1; padding: 14px; background: none; border: none; color: var(--muted); font-size: 13px; font-weight: 600; cursor: pointer; }
+    nav button.active { color: var(--primary); border-top: 2px solid var(--primary); }
+
+    .container { padding: 16px; max-width: 500px; margin: 0 auto; }
+    .page { display: none; }
+    .page.active { display: block; }
+
+    .card { background: var(--card); border-radius: 12px; padding: 16px; margin-bottom: 16px; border: 1px solid var(--border); }
+    .btn { display: block; width: 100%; padding: 12px; background: var(--primary); color: white; border: none; border-radius: 8px; font-size: 14px; font-weight: 700; cursor: pointer; text-align: center; text-decoration: none; }
+    .btn-success { background: var(--accent); }
+    .btn-secondary { background: #333; color: white; }
+    .btn-danger { background: #dc2626; color: white; }
+    .btn-sm { padding: 6px 12px; font-size: 12px; width: auto; display: inline-block; }
+
+    .catalog-poster { width: 100%; aspect-ratio: 2 / 3; object-fit: cover; border-radius: 8px; margin-bottom: 12px; }
+
+    .screen { background: #33333f; text-align: center; padding: 6px; font-size: 11px; color: var(--muted); letter-spacing: 2px; border-radius: 4px; margin: 16px 0; }
+    .seats-grid { display: grid; grid-template-columns: repeat(6, 1fr); gap: 8px; margin-bottom: 16px; }
+    .seat { background: #2b2b36; border: 1px solid #3f3f4e; padding: 10px 0; text-align: center; border-radius: 6px; font-size: 13px; font-weight: 600; cursor: pointer; user-select: none; }
+    .seat.selected { background: var(--primary); border-color: var(--primary); color: white; }
+    .seat.occupied { background: #444; border-color: #444; color: #777; cursor: not-allowed; }
+
+    .form-group { margin-bottom: 12px; }
+    .form-group label { display: block; font-size: 12px; color: var(--muted); margin-bottom: 4px; }
+    .form-group input, .form-group select { width: 100%; padding: 10px; background: #121214; border: 1px solid #333; border-radius: 6px; color: white; font-size: 14px; }
+
+    .poster-preview { width: 100%; aspect-ratio: 2 / 3; max-height: 200px; object-fit: cover; border-radius: 8px; margin-top: 8px; border: 1px solid var(--border); display: none; }
+
+    .badge { display: inline-block; padding: 4px 10px; border-radius: 12px; font-size: 11px; font-weight: 700; }
+    .badge-pending { background: #eab30822; color: #eab308; border: 1px solid #eab308; }
+    .badge-awaiting { background: #3b82f622; color: #60a5fa; border: 1px solid #3b82f6; }
+    .badge-paid { background: #22c55e22; color: #22c55e; border: 1px solid #22c55e; }
+    .badge-used { background: #dc262622; color: #f87171; border: 1px solid #dc2626; }
+
+    #qrcode { background: white; padding: 12px; border-radius: 8px; display: inline-block; margin: 16px 0; }
+    
+    .stats-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; }
+    .stats-compact { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; max-width: 100%; }
+    .stat-box { background: #121214; padding: 10px; border-radius: 8px; text-align: center; }
+    .stat-box .num { font-size: 18px; font-weight: 800; color: var(--primary); }
+    .stat-box .lbl { font-size: 10px; color: var(--muted); }
+
+    .session-item { border-bottom: 1px solid var(--border); padding: 12px 0; }
+    .session-item:last-child { border-bottom: none; }
+    .session-info-vertical { margin-top: 6px; font-size: 13px; color: var(--text); display: flex; flex-direction: column; gap: 4px; }
+    .session-info-row { display: flex; align-items: center; gap: 6px; }
+
+    .btn-qr-green {
+      background-color: #28a745;
+      color: #ffffff;
+      font-size: 15px;
+      font-weight: 700;
+      padding: 12px 20px;
+      border: none;
+      border-radius: 10px;
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+      box-shadow: 0 4px 10px rgba(40, 167, 69, 0.3);
+      width: 100%;
+      margin-bottom: 8px;
+    }
+    .btn-qr-green:hover { background-color: #218838; }
+    .btn-camera-toggle { background: transparent; border: none; color: #888; font-size: 11px; cursor: pointer; text-decoration: underline; margin-top: 4px; }
+
+    .admin-subnav { display: flex; gap: 6px; overflow-x: auto; margin-bottom: 16px; padding-bottom: 4px; }
+    .admin-subnav button { padding: 8px 12px; background: #121214; border: 1px solid #333; color: var(--muted); border-radius: 6px; font-size: 12px; font-weight: 600; cursor: pointer; white-space: nowrap; }
+    .admin-subnav button.active { background: var(--primary); color: white; border-color: var(--primary); }
+
+    .auth-toggle { display: flex; gap: 8px; margin-bottom: 14px; }
+    .auth-toggle button { flex: 1; padding: 10px; background: #121214; border: 1px solid #333; color: var(--muted); border-radius: 6px; font-weight: 700; cursor: pointer; }
+    .auth-toggle button.active { background: var(--primary); color: white; border-color: var(--primary); }
+
+    .modal { display: none; position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.85); z-index: 1000; align-items: center; justify-content: center; padding: 16px; overflow-y: auto; }
+    .modal.active { display: flex; }
+    .modal-content { background: var(--card); border: 1px solid var(--border); border-radius: 12px; padding: 20px; width: 100%; max-width: 420px; max-height: 90vh; overflow-y: auto; }
+  </style>
+</head>
+<body>
+
+  <div id="admin-banner" class="admin-banner">⚙️ РЕЖИМ АДМИНИСТРАТОРА</div>
+
+  <header>
+    <h1>КИНОШКА</h1>
+    <p>Киношка — больше, чем просто кино!</p>
+    <span id="header-admin-icon" class="admin-link" onclick="handleAdminIconClick()" title="Панель администратора">⚙️</span>
+  </header>
+
+  <div class="container">
+    <div id="page-catalog" class="page active">
+      <h2 style="margin-bottom: 12px; font-size: 18px;">🍿 Доступные фильмы</h2>
+      <div id="sessions-list"></div>
+    </div>
+
+    <div id="page-book" class="page">
+      <button class="btn btn-secondary" onclick="showPage('page-catalog')" style="margin-bottom: 12px;">← Назад к афише</button>
+      <div class="card">
+        <h2 id="book-movie-title" style="margin-bottom: 4px;"></h2>
+        <p id="book-movie-meta" style="color: var(--muted); font-size: 13px; margin-bottom: 12px;"></p>
+
+        <div class="screen">ЭКРАН</div>
+        <div class="seats-grid" id="seats-container"></div>
+        <p id="selected-seats-info" style="font-size: 13px; color: var(--accent); margin-bottom: 12px; font-weight: 600; text-align: center;"></p>
+
+        <div id="loyalty-alert" style="display:none; background: #22c55e22; color: #22c55e; padding: 10px; border-radius: 6px; font-size: 12px; margin-bottom: 12px; border: 1px solid #22c55e;">
+          🎉 Ура! Это ваш 10-й визит! Билет будет БЕСПЛАТНЫМ!
+        </div>
+
+        <div class="form-group">
+          <label>Ваше Имя</label>
+          <input type="text" id="user-name" placeholder="Иван">
+        </div>
+        <div class="form-group">
+          <label>Номер телефона (9 цифр)</label>
+          <input type="tel" id="user-phone" placeholder="069123456" maxlength="9" oninput="checkLoyalty()">
+        </div>
+
+        <div class="form-group">
+          <label>Промокод (если есть)</label>
+          <div style="display:flex; gap:8px;">
+            <input type="text" id="promo-input" placeholder="Введите промокод" style="text-transform:uppercase;">
+            <button class="btn btn-secondary" style="width:auto; padding:0 16px;" onclick="applyPromoCode()">Применить</button>
+          </div>
+          <div id="promo-msg" style="font-size:12px; margin-top:6px; font-weight:600;"></div>
+          <div id="promo-discount-amount"></div>
+        </div>
+
+        <div style="margin: 16px 0; font-size: 16px; font-weight: 700;">
+          Сумма к оплате: <span id="book-price" style="color: var(--primary);">50 MDL</span>
+          <div id="promo-detail" style="font-size: 12px; color: var(--muted); font-weight: 400; margin-top: 2px;"></div>
+        </div>
+
+        <button class="btn" onclick="submitBooking()">Оформить билет</button>
+      </div>
+    </div>
+
+    <div id="page-ticket" class="page">
+      <div class="card" style="text-align: center;" id="ticket-card-content"></div>
+    </div>
+
+    <div id="page-my-tickets" class="page">
+      <h2 style="margin-bottom: 12px; font-size: 18px;">🎟️ Мои билеты</h2>
+      
+      <div id="user-auth-box" class="card">
+        <div class="auth-toggle">
+          <button id="auth-tab-login" class="active" onclick="switchClientAuthMode('login')">🔑 Войти</button>
+          <button id="auth-tab-register" onclick="switchClientAuthMode('register')">📝 Зарегистрироваться</button>
+        </div>
+
+        <div id="form-client-login">
+          <div class="form-group">
+            <label>Номер телефона (9 цифр)</label>
+            <input type="tel" id="login-phone" placeholder="069123456" maxlength="9">
+          </div>
+          <div class="form-group">
+            <label>Пароль</label>
+            <input type="password" id="login-pass" placeholder="Введите пароль">
+          </div>
+          <button class="btn" onclick="processClientLogin()">Войти в аккаунт</button>
+        </div>
+
+        <div id="form-client-register" style="display:none;">
+          <div class="form-group">
+            <label>Ваше Имя</label>
+            <input type="text" id="reg-name" placeholder="Иван">
+          </div>
+          <div class="form-group">
+            <label>Номер телефона (9 цифр)</label>
+            <input type="tel" id="reg-phone" placeholder="069123456" maxlength="9">
+          </div>
+          <div class="form-group">
+            <label>Придумайте пароль</label>
+            <input type="password" id="reg-pass" placeholder="Придумайте пароль">
+          </div>
+          <button class="btn btn-success" onclick="processClientRegister()">Зарегистрироваться</button>
+        </div>
+      </div>
+
+      <div id="user-tickets-box" style="display:none;">
+        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px;">
+          <span id="user-welcome-text" style="font-size:13px; color:var(--muted);"></span>
+        </div>
+        <div id="my-tickets-list"></div>
+        
+        <button onclick="logoutUser()" class="btn btn-danger btn-sm" style="margin-top: 16px; float: right;">🚪 Выйти из аккаунта</button>
+        <div style="clear: both;"></div>
+      </div>
+    </div>
+
+    <div id="page-admin" class="page">
+      <div style="display:flex; justify-content: space-between; align-items:center; margin-bottom: 12px;">
+        <h2>⚙️ Панель Управления</h2>
+        <button onclick="logoutAdmin()" class="btn btn-danger btn-sm">🚪 Выйти</button>
+      </div>
+
+      <div class="admin-subnav">
+        <button id="tab-btn-main" class="active" onclick="switchAdminTab('main')">Главная</button>
+        <button id="tab-btn-stats" onclick="switchAdminTab('stats')">Статистика</button>
+        <button id="tab-btn-clients" onclick="switchAdminTab('clients')">Клиенты</button>
+        <button id="tab-btn-promos" onclick="switchAdminTab('promos')">Промокоды</button>
+      </div>
+
+      <div id="admin-tab-main" class="admin-tab-content">
+        <div class="card">
+          <div class="stats-header">
+            <h3>📊 Статистика за сегодня</h3>
+            <button class="btn btn-secondary btn-sm" onclick="resetDailyStats()">🔄 Обнулить</button>
+          </div>
+          <div class="stats-compact">
+            <div class="stat-box"><div class="num" id="stat-revenue">0 MDL</div><div class="lbl">Выручка</div></div>
+            <div class="stat-box"><div class="num" id="stat-sold">0</div><div class="lbl">Продано билетов</div></div>
+          </div>
+        </div>
+
+        <div class="card">
+          <h3>🎬 Активные фильмы</h3>
+          <div id="admin-sessions-list" style="margin-top: 10px;"></div>
+        </div>
+
+        <div class="card">
+          <h3>📷 Проверка QR-кода на входе</h3>
+          
+          <button class="btn-qr-green" onclick="startCameraScanner()">
+            📷 Включить сканер камеры
+          </button>
+          
+          <label class="btn-qr-green" style="background-color: #1e7e34;">
+            📁 Выбрать из галереи
+            <input type="file" id="qr-file-input" accept="image/*" style="display: none;" onchange="scanFromFile(this)">
+          </label>
+
+          <div style="text-align:center;">
+            <button class="btn-camera-toggle" onclick="toggleCamera()">⚙ Сменить камеру</button>
+          </div>
+
+          <div id="reader" style="width: 100%; margin: 10px 0;"></div>
+          
+          <div class="form-group" style="margin-top:10px;">
+            <input type="text" id="manual-ticket-id" placeholder="Или ID билета вручную (например: T123456)">
+          </div>
+          <button class="btn btn-secondary" onclick="verifyManualTicket()">Проверить ID</button>
+          <div id="scan-result" style="margin-top: 10px; font-weight: 700; text-align: center;"></div>
+        </div>
+
+        <div class="card">
+          <h3>⏳ Ожидают подтверждения оплаты (MIA)</h3>
+          <div id="admin-pending-list" style="margin-top: 10px;"></div>
+        </div>
+
+        <div class="card">
+          <h3>➕ Добавить новый фильм / сеанс</h3>
+          <div class="form-group"><label>Название фильма</label><input type="text" id="new-title" placeholder="Например: Аватар 3"></div>
+          <div class="form-group">
+            <label>Дата сеанса</label>
+            <input type="date" id="new-date">
+          </div>
+          <div class="form-group">
+            <label>Время сеанса</label>
+            <input type="time" id="new-time" value="19:30">
+          </div>
+          <div class="form-group"><label>Цена за 1 билет (MDL)</label><input type="number" id="new-price" value="50"></div>
+          <div class="form-group"><label>Количество мест в зале</label><input type="number" id="new-seats" value="40"></div>
+          
+          <div class="form-group">
+            <label>Постер фильма</label>
+            <input type="file" id="new-poster-file" accept="image/*" onchange="handlePosterUpload(event, 'new')">
+            <input type="text" id="new-poster" placeholder="Или вставьте ссылку на фото (https://...)" oninput="handlePosterUrlChange('new')" style="margin-top:6px;">
+            <img id="new-poster-preview" class="poster-preview">
+            <button type="button" id="new-poster-delete-btn" class="btn btn-secondary btn-sm" style="margin-top:6px; display:none;" onclick="clearPoster('new')">🗑️ Удалить фото</button>
+          </div>
+
+          <button class="btn btn-success" onclick="createSession()">Создать фильм</button>
+        </div>
+
+        <div class="card">
+          <h3>🔒 Безопасность (PIN-код админа)</h3>
+          <div class="form-group">
+            <label>Текущий PIN-код</label>
+            <input type="password" id="old-pin-input" placeholder="Введите текущий PIN">
+          </div>
+          <div class="form-group">
+            <label>Новый PIN-код</label>
+            <input type="password" id="new-pin-input" placeholder="Введите новый PIN (мин. 4 символа)">
+          </div>
+          <button class="btn btn-secondary" onclick="changeAdminPin()">Изменить PIN-код</button>
+        </div>
+      </div>
+
+      <div id="admin-tab-stats" class="admin-tab-content" style="display:none;">
+        <div class="card">
+          <h3>📅 Статистика по периодам</h3>
+          <div class="form-group" style="margin-top:10px;">
+            <label>Выберите конкретную дату для просмотра</label>
+            <input type="date" id="stats-date-picker" onchange="renderPeriodStats()">
+          </div>
+          <div id="stats-period-result"></div>
+        </div>
+      </div>
+
+      <div id="admin-tab-clients" class="admin-tab-content" style="display:none;">
+        <div class="card">
+          <h3>👥 Зарегистрированные клиенты</h3>
+          <div id="clients-list" style="margin-top:10px;"></div>
+        </div>
+      </div>
+
+      <div id="admin-tab-promos" class="admin-tab-content" style="display:none;">
+        <div class="card">
+          <h3>🏷️ Управление промокодами</h3>
+          <p style="font-size:12px; color:var(--muted); margin-bottom:10px;">Каждый промокод даёт скидку 10 MDL на каждый билет.</p>
+          <div style="display:flex; gap:8px; margin-bottom:12px;">
+            <input type="text" id="new-promo-code" placeholder="Код (например: KINO10)" style="text-transform:uppercase;">
+            <button class="btn btn-success" style="width:auto; white-space:nowrap;" onclick="addPromoCode()">Добавить</button>
+          </div>
+          <div id="promos-list"></div>
+        </div>
+      </div>
+
+    </div>
+  </div>
+
+  <div id="modal-admin-login" class="modal">
+    <div class="modal-content">
+      <h3 style="margin-bottom: 12px;">🔑 Вход для Администратора</h3>
+      <div class="form-group">
+        <label>Введите PIN-код</label>
+        <input type="password" id="admin-login-pin" placeholder="Пароль">
+      </div>
+      <button class="btn" onclick="submitAdminLogin()" style="margin-bottom: 8px;">Войти</button>
+      <button class="btn btn-secondary" onclick="forgotPinFlow()" style="margin-bottom: 8px;">Забыли PIN-код?</button>
+      <button class="btn btn-secondary" onclick="closeAdminLoginModal()" style="background:transparent; color:var(--muted);">Отмена</button>
+    </div>
+  </div>
+
+  <div id="modal-edit-session" class="modal">
+    <div class="modal-content">
+      <h3 style="margin-bottom: 12px;">✏️ Редактирование сеанса</h3>
+      <input type="hidden" id="edit-session-id">
+      <div class="form-group"><label>Название фильма</label><input type="text" id="edit-title"></div>
+      <div class="form-group">
+        <label>Дата сеанса</label>
+        <input type="date" id="edit-date">
+      </div>
+      <div class="form-group">
+        <label>Время сеанса</label>
+        <input type="time" id="edit-time">
+      </div>
+      <div class="form-group"><label>Цена (MDL)</label><input type="number" id="edit-price"></div>
+      <div class="form-group"><label>Количество мест</label><input type="number" id="edit-seats"></div>
+      
+      <div class="form-group">
+        <label>Постер фильма</label>
+        <input type="file" id="edit-poster-file" accept="image/*" onchange="handlePosterUpload(event, 'edit')">
+        <input type="text" id="edit-poster" placeholder="Или вставьте ссылку на фото (https://...)" oninput="handlePosterUrlChange('edit')" style="margin-top:6px;">
+        <img id="edit-poster-preview" class="poster-preview">
+        <button type="button" id="edit-poster-delete-btn" class="btn btn-secondary btn-sm" style="margin-top:6px; display:none;" onclick="clearPoster('edit')">🗑️ Удалить фото</button>
+      </div>
+
+      <button class="btn btn-success" onclick="saveEditedSession()" style="margin-bottom: 8px;">Сохранить изменения</button>
+      <button class="btn btn-secondary" onclick="closeEditModal()">Отмена</button>
+    </div>
+  </div>
+
+  <!-- МОДАЛЬНОЕ ОКНО ПРИДУМКИ ПАРОЛЯ ДЛЯ НОВОГО ПОКУПАТЕЛЯ -->
+  <div id="modal-new-user-pass" class="modal">
+    <div class="modal-content">
+      <h3 style="margin-bottom: 6px;">🎉 Билет успешно оформлен!</h3>
+      <p style="font-size:13px; color:var(--muted); margin-bottom:12px;">Чтобы вы могли входить в свой аккаунт и видеть свои билеты, придумайте пароль.</p>
+      <div class="form-group">
+        <label>Придумайте пароль (мин. 3 символа)</label>
+        <input type="password" id="new-user-pass-input" placeholder="Пароль">
+      </div>
+      <button class="btn btn-success" onclick="saveNewUserPassword()">Сохранить и продолжить</button>
+    </div>
+  </div>
+
+  <nav>
+    <button id="nav-catalog" class="active" onclick="showPage('page-catalog')">🍿 Афиша</button>
+    <button id="nav-my-tickets" onclick="showPage('page-my-tickets')">🎟️ Мои билеты</button>
+    <button id="nav-admin" onclick="showPage('page-admin')" style="display:none;">⚙️ Админка</button>
+    <button id="nav-logout-admin" onclick="logoutAdmin()" style="display:none; color:#dc2626;">🚪 Выйти</button>
+  </nav>
+
+  <script>
+    const firebaseConfig = {
+      apiKey: "aizasyb1vht582xmhwmjiycibzusreyfqbnagm",
+      authDomain: "kinoshka-5a131.firebaseapp.com",
+      projectId: "kinoshka-5a131",
+      storageBucket: "kinoshka-5a131.firebasestorage.app",
+      messagingSenderId: "103924039293",
+      appId: "1:103924039293:web:cb37c37dfcf5a6252bbb14"
+    };
+
+    let db = null;
+    let isFirebaseReady = false;
+
+    try {
+      firebase.initializeApp(firebaseConfig);
+      db = firebase.firestore();
+      isFirebaseReady = true;
+    } catch (e) {
+      console.warn("Ошибка подключения Firebase", e);
+    }
+
+    const MIA_LINK = "https://mia-qr.bnm.md/1/m/BNM/FCB48845322397447559e66b93d5c7e2cfc";
+    const SECRET_CODEWORD = "shokolad";
+    const DEFAULT_POSTER = "https://images.unsplash.com/photo-1489599849927-2ee91cede3ba?auto=format&fit=crop&w=600&q=80";
+
+    const RED_CALENDAR_SVG = `
+      <svg width="22" height="22" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" style="vertical-align:middle; flex-shrink:0;">
+        <rect x="3" y="4" width="18" height="17" rx="3" fill="#1e1e24" stroke="#e50914" stroke-width="2"/>
+        <path d="M3 8H21" stroke="#e50914" stroke-width="2"/>
+        <rect x="7" y="2" width="2" height="4" rx="1" fill="#e50914"/>
+        <rect x="15" y="2" width="2" height="4" rx="1" fill="#e50914"/>
+        <rect x="6" y="11" width="3" height="3" rx="0.5" fill="#3b82f6"/>
+        <rect x="11" y="11" width="3" height="3" rx="0.5" fill="#3b82f6"/>
+        <rect x="16" y="11" width="3" height="3" rx="0.5" fill="#3b82f6"/>
+        <rect x="6" y="15" width="3" height="3" rx="0.5" fill="#3b82f6"/>
+        <rect x="11" y="15" width="3" height="3" rx="0.5" fill="#3b82f6"/>
+        <rect x="16" y="15" width="3" height="3" rx="0.5" fill="#3b82f6"/>
+      </svg>
+    `;
+
+    // Звуковой сигнал успешного сканирования (Web Audio API)
+    function playSuccessSound() {
+      try {
+        const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+        const osc = audioCtx.createOscillator();
+        const gain = audioCtx.createGain();
+        osc.type = 'sine';
+        osc.frequency.setValueAtTime(587.33, audioCtx.currentTime); // Нота Ре 5
+        osc.frequency.setValueAtTime(880, audioCtx.currentTime + 0.08); // Нота Ля 5
+        gain.gain.setValueAtTime(0.15, audioCtx.currentTime);
+        gain.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.3);
+        osc.connect(gain);
+        gain.connect(audioCtx.destination);
+        osc.start();
+        osc.stop(audioCtx.currentTime + 0.3);
+      } catch (e) {
+        // Если браузер заблокировал звук до первого клика
+      }
+    }
+
+    let sessionsState = [];
+    let ticketsState = [];
+    let promosState = ['KINO10', 'SALE10'];
+    let usersState = {};
+
+    let currentSession = null;
+    let selectedSeats = [];
+    let appliedDiscount = 0;
+    let html5QrcodeScanner = null;
+    let cameraFacing = "environment";
+    let pendingTicketForRegId = null;
+
+    let newPosterData = '';
+    let editPosterData = '';
+
+    function getDBLocal(key) { return JSON.parse(localStorage.getItem(key) || '[]'); }
+    function setDBLocal(key, val) { localStorage.setItem(key, JSON.stringify(val)); }
+
+    function initFirebaseListeners() {
+      if (!isFirebaseReady) {
+        sessionsState = getDBLocal('sessions');
+        ticketsState = getDBLocal('tickets');
+        promosState = getDBLocal('promos');
+        if (promosState.length === 0) promosState = ['KINO10', 'SALE10'];
+        usersState = JSON.parse(localStorage.getItem('kinoshka_users') || '{}');
+        renderCatalog();
+        return;
+      }
+
+      db.collection('sessions').onSnapshot(snapshot => {
+        sessionsState = [];
+        snapshot.forEach(doc => sessionsState.push({ id: doc.id, ...doc.data() }));
+        renderCatalog();
+        if (document.getElementById('page-admin').classList.contains('active')) renderAdmin();
+      });
+
+      db.collection('tickets').onSnapshot(snapshot => {
+        ticketsState = [];
+        snapshot.forEach(doc => ticketsState.push({ id: doc.id, ...doc.data() }));
+        if (document.getElementById('page-admin').classList.contains('active')) renderAdmin();
+        const loggedPhone = sessionStorage.getItem('kinoshka_client_phone');
+        if (loggedPhone) renderUserTickets(loggedPhone);
+      });
+
+      db.collection('promos').onSnapshot(snapshot => {
+        promosState = [];
+        snapshot.forEach(doc => promosState.push(doc.data().code));
+        if (promosState.length === 0) promosState = ['KINO10', 'SALE10'];
+      });
+
+      db.collection('users').onSnapshot(snapshot => {
+        usersState = {};
+        snapshot.forEach(doc => { usersState[doc.id] = doc.data(); });
+        if (document.getElementById('page-admin').classList.contains('active')) renderClientsList();
+      });
+    }
+
+    function getAdminPin() {
+      return localStorage.getItem('kinoshka_admin_pin') || '1234';
+    }
+
+    function isAdminLoggedIn() {
+      return localStorage.getItem('kinoshka_admin_logged') === 'true';
+    }
+
+    function formatDateShortYear(d) {
+      if (!d) return '';
+      const date = new Date(d);
+      if (isNaN(date.getTime())) return d;
+      const day = date.getDate();
+      const months = ['января', 'февраля', 'марта', 'апреля', 'мая', 'июня', 'июля', 'августа', 'сентября', 'октября', 'ноября', 'декабря'];
+      const monthStr = months[date.getMonth()];
+      const yearShort = String(date.getFullYear()).slice(-2);
+      return `${day} ${monthStr} ${yearShort} г.`;
+    }
+
+    function updateNavState() {
+      const isLogged = isAdminLoggedIn();
+      document.getElementById('admin-banner').style.display = isLogged ? 'block' : 'none';
+      document.getElementById('header-admin-icon').style.display = isLogged ? 'none' : 'block';
+      document.getElementById('nav-my-tickets').style.display = isLogged ? 'none' : 'block';
+      document.getElementById('nav-admin').style.display = isLogged ? 'block' : 'none';
+      document.getElementById('nav-logout-admin').style.display = isLogged ? 'block' : 'none';
+    }
+
+    function handleAdminIconClick() {
+      if (isAdminLoggedIn()) {
+        showPage('page-admin');
+      } else {
+        document.getElementById('modal-admin-login').classList.add('active');
+      }
+    }
+
+    function closeAdminLoginModal() {
+      document.getElementById('modal-admin-login').classList.remove('active');
+    }
+
+    function submitAdminLogin() {
+      const pin = document.getElementById('admin-login-pin').value.trim();
+      if (pin === getAdminPin()) {
+        localStorage.setItem('kinoshka_admin_logged', 'true');
+        document.getElementById('admin-login-pin').value = '';
+        closeAdminLoginModal();
+        updateNavState();
+        showPage('page-admin');
+      } else {
+        alert('Неверный PIN-код!');
+      }
+    }
+
+    function logoutAdmin() {
+      localStorage.removeItem('kinoshka_admin_logged');
+      updateNavState();
+      showPage('page-catalog');
+    }
+
+    function forgotPinFlow() {
+      const code = prompt('Введите кодовое слово для сброса PIN-кода:');
+      if (!code) return;
+      if (code.trim().toLowerCase() === SECRET_CODEWORD) {
+        const newPin = prompt('Кодовое слово верно! Введите новый PIN-код для админки (мин. 4 символа):');
+        if (newPin && newPin.trim().length >= 4) {
+          localStorage.setItem('kinoshka_admin_pin', newPin.trim());
+          alert('Новый PIN-код успешно сохранен! Используйте его для входа.');
+        } else {
+          alert('Слишком короткий PIN-код.');
+        }
+      } else {
+        alert('Неверное кодовое слово! Восстановление невозможно.');
+      }
+    }
+
+    function showPage(pageId) {
+      document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
+      document.querySelectorAll('nav button').forEach(b => b.classList.remove('active'));
+      
+      const target = document.getElementById(pageId);
+      if (target) target.classList.add('active');
+
+      localStorage.setItem('kinoshka_active_page', pageId);
+      updateNavState();
+
+      if (pageId === 'page-catalog') {
+        document.getElementById('nav-catalog').classList.add('active');
+        renderCatalog();
+      } else if (pageId === 'page-my-tickets') {
+        document.getElementById('nav-my-tickets').classList.add('active');
+        checkUserAuthView();
+      } else if (pageId === 'page-admin') {
+        if (!isAdminLoggedIn()) {
+          showPage('page-catalog');
+          handleAdminIconClick();
+          return;
+        }
+        document.getElementById('nav-admin').classList.add('active');
+        const savedTab = localStorage.getItem('kinoshka_admin_tab') || 'main';
+        switchAdminTab(savedTab);
+        renderAdmin();
+      }
+    }
+
+    function handlePosterUpload(event, type) {
+      const file = event.target.files[0];
+      if (!file) return;
+
+      if (file.size > 4 * 1024 * 1024) {
+        alert('Файл слишком большой! Выберите изображение размером до 4 МБ.');
+        event.target.value = '';
+        return;
+      }
+
+      const reader = new FileReader();
+      reader.onload = function(e) {
+        const dataUrl = e.target.result;
+        if (type === 'new') {
+          newPosterData = dataUrl;
+          document.getElementById('new-poster').value = '';
+          updatePosterPreview('new', dataUrl);
+        } else {
+          editPosterData = dataUrl;
+          document.getElementById('edit-poster').value = '';
+          updatePosterPreview('edit', dataUrl);
+        }
+      };
+      reader.readAsDataURL(file);
+    }
+
+    function handlePosterUrlChange(type) {
+      const url = document.getElementById(type + '-poster').value.trim();
+      if (type === 'new') {
+        newPosterData = url;
+        document.getElementById('new-poster-file').value = '';
+      } else {
+        editPosterData = url;
+        document.getElementById('edit-poster-file').value = '';
+      }
+      updatePosterPreview(type, url);
+    }
+
+    function updatePosterPreview(type, src) {
+      const img = document.getElementById(type + '-poster-preview');
+      const delBtn = document.getElementById(type + '-poster-delete-btn');
+      if (src) {
+        img.src = src;
+        img.style.display = 'block';
+        delBtn.style.display = 'inline-block';
+      } else {
+        img.src = '';
+        img.style.display = 'none';
+        delBtn.style.display = 'none';
+      }
+    }
+
+    function clearPoster(type) {
+      if (type === 'new') {
+        newPosterData = '';
+        document.getElementById('new-poster').value = '';
+        document.getElementById('new-poster-file').value = '';
+      } else {
+        editPosterData = '';
+        document.getElementById('edit-poster').value = '';
+        document.getElementById('edit-poster-file').value = '';
+      }
+      updatePosterPreview(type, null);
+    }
+
+    function renderCatalog() {
+      const list = document.getElementById('sessions-list');
+      if (!sessionsState || sessionsState.length === 0) {
+        list.innerHTML = '<p style="color:var(--muted); text-align:center; padding: 20px 0;">Афиша пока пуста. Добавьте фильм через панель администратора.</p>';
+        return;
+      }
+      list.innerHTML = sessionsState.map(s => `
+        <div class="card">
+          <img class="catalog-poster" src="${s.poster || DEFAULT_POSTER}" onerror="this.src='${DEFAULT_POSTER}'">
+          <h3 style="font-size:18px;">${s.title}</h3>
+          <p style="color:var(--muted); font-size:13px; margin: 6px 0 12px 0;">📅 ${formatDateShortYear(s.date)} в ${s.time} | 💰 ${s.price} MDL</p>
+          <button class="btn" onclick="startBooking('${s.id}')">Купить билет</button>
+        </div>
+      `).join('');
+    }
+
+    function startBooking(sessionId) {
+      currentSession = sessionsState.find(s => s.id === sessionId);
+      selectedSeats = [];
+      appliedDiscount = 0;
+
+      document.getElementById('book-movie-title').innerText = currentSession.title;
+      document.getElementById('book-movie-meta').innerText = `📅 ${formatDateShortYear(currentSession.date)} в ${currentSession.time}`;
+      document.getElementById('promo-input').value = '';
+      document.getElementById('promo-msg').innerText = '';
+      document.getElementById('promo-discount-amount').innerHTML = '';
+
+      updateBookingPrice();
+
+      const phone = localStorage.getItem('kinoshka_user_phone') || '';
+      document.getElementById('user-phone').value = phone;
+
+      renderSeats();
+      checkLoyalty();
+      showPage('page-book');
+    }
+
+    function toggleSeat(seatCode) {
+      const index = selectedSeats.indexOf(seatCode);
+      if (index > -1) {
+        selectedSeats.splice(index, 1);
+      } else {
+        if (selectedSeats.length >= 5) {
+          alert('Вы можете выбрать максимум 5 мест на один заказ!');
+          return;
+        }
+        selectedSeats.push(seatCode);
+      }
+      renderSeats();
+      checkLoyalty();
+    }
+
+    function updateBookingPrice() {
+      const count = selectedSeats.length || 0;
+      const basePrice = currentSession.price;
+      const pricePerTicket = Math.max(0, basePrice - appliedDiscount);
+      const totalPrice = pricePerTicket * count;
+
+      const infoEl = document.getElementById('selected-seats-info');
+      if (count > 0) {
+        infoEl.innerText = `Выбрано мест: ${count} (№ ${selectedSeats.join(', ')})`;
+      } else {
+        infoEl.innerText = `Выберите места на схеме (до 5 мест)`;
+      }
+
+      document.getElementById('book-price').innerText = `${totalPrice} MDL`;
+
+      const totalDiscountAmount = appliedDiscount * (count || 1);
+      const discountEl = document.getElementById('promo-discount-amount');
+      if (appliedDiscount > 0) {
+        discountEl.innerHTML = `<div style="font-size:16px; font-weight:700; color:#22c55e; margin-top:6px;">- ${totalDiscountAmount} MDL</div>`;
+      } else {
+        discountEl.innerHTML = '';
+      }
+
+      const detailEl = document.getElementById('promo-detail');
+      if (appliedDiscount > 0 && count > 0) {
+        detailEl.innerText = `(${pricePerTicket} MDL за место × ${count} мест)`;
+      } else {
+        detailEl.innerText = '';
+      }
+    }
+
+    function applyPromoCode() {
+      const code = document.getElementById('promo-input').value.trim().toUpperCase();
+      const msg = document.getElementById('promo-msg');
+      if (!code) return;
+
+      if (promosState.includes(code)) {
+        appliedDiscount = 10;
+        msg.style.color = '#22c55e';
+        msg.innerText = '✅ Промокод применен! Скидка 10 MDL к каждому билету';
+      } else {
+        appliedDiscount = 0;
+        msg.style.color = '#dc2626';
+        msg.innerText = '❌ Неверный или недействительный промокод';
+      }
+      checkLoyalty();
+    }
+
+    function renderSeats() {
+      const activeTickets = ticketsState.filter(t => t.sessionId === currentSession.id && t.status !== 'cancelled');
+      
+      let occupiedSeats = [];
+      activeTickets.forEach(t => {
+        if (t.seat) {
+          String(t.seat).split(',').forEach(s => occupiedSeats.push(s.trim()));
+        }
+      });
+
+      const grid = document.getElementById('seats-container');
+      grid.innerHTML = '';
+
+      for (let i = 1; i <= currentSession.totalSeats; i++) {
+        const seatCode = String(i);
+        const isOccupied = occupiedSeats.includes(seatCode);
+        const isSelected = selectedSeats.includes(seatCode);
+
+        const seatEl = document.createElement('div');
+        seatEl.className = `seat ${isOccupied ? 'occupied' : ''} ${isSelected ? 'selected' : ''}`;
+        seatEl.innerText = seatCode;
+
+        if (!isOccupied) {
+          seatEl.onclick = () => toggleSeat(seatCode);
+        }
+        grid.appendChild(seatEl);
+      }
+    }
+
+    function checkLoyalty() {
+      const phone = document.getElementById('user-phone').value.replace(/\D/g, '');
+      const alertBox = document.getElementById('loyalty-alert');
+
+      if (!phone || phone.length !== 9) {
+        alertBox.style.display = 'none';
+        updateBookingPrice();
+        return;
+      }
+
+      const userPaidTickets = ticketsState.filter(t => t.phone.replace(/\D/g, '') === phone && (t.status === 'paid' || t.status === 'used'));
+      const isFree = userPaidTickets.length > 0 && (userPaidTickets.length + 1) % 10 === 0;
+
+      if (isFree) {
+        alertBox.style.display = 'block';
+        document.getElementById('book-price').innerText = '0 MDL (БЕСПЛАТНО)';
+        document.getElementById('promo-detail').innerText = '';
+        document.getElementById('promo-discount-amount').innerHTML = '';
+      } else {
+        alertBox.style.display = 'none';
+        updateBookingPrice();
+      }
+    }
+
+    function submitBooking() {
+      const name = document.getElementById('user-name').value.trim();
+      const phone = document.getElementById('user-phone').value.trim().replace(/\D/g, '');
+
+      if (selectedSeats.length === 0) { alert('Пожалуйста, выберите хотя бы одно место на схеме!'); return; }
+      if (phone.length !== 9) { alert('Номер телефона должен состоять ровно из 9 цифр (например, 069123456)!'); return; }
+      if (!name) { alert('Заполните Ваше Имя!'); return; }
+
+      const userPaidTickets = ticketsState.filter(t => t.phone.replace(/\D/g, '') === phone && (t.status === 'paid' || t.status === 'used'));
+      const isFree = userPaidTickets.length > 0 && (userPaidTickets.length + 1) % 10 === 0;
+
+      const basePrice = currentSession.price;
+      const pricePerTicket = isFree ? 0 : Math.max(0, basePrice - appliedDiscount);
+      const totalPrice = pricePerTicket * selectedSeats.length;
+
+      const newTicketId = 'T' + Math.floor(100000 + Math.random() * 900000);
+      const newTicket = {
+        id: newTicketId,
+        sessionId: currentSession.id,
+        movieTitle: currentSession.title,
+        date: currentSession.date,
+        time: currentSession.time,
+        seat: selectedSeats.join(', '),
+        seatsCount: selectedSeats.length,
+        userName: name,
+        phone: phone,
+        price: totalPrice,
+        pricePerTicket: pricePerTicket,
+        isFree: isFree,
+        status: 'pending',
+        createdAt: new Date().toISOString()
+      };
+
+      if (isFirebaseReady) {
+        db.collection('tickets').doc(newTicketId).set(newTicket);
+      } else {
+        ticketsState.push(newTicket);
+        setDBLocal('tickets', ticketsState);
+      }
+
+      localStorage.setItem('kinoshka_user_phone', phone);
+
+      // Автоматическая регистрация клиента в системе, если его еще не было
+      if (!usersState[phone]) {
+        pendingTicketForRegId = newTicketId;
+        document.getElementById('modal-new-user-pass').classList.add('active');
+      } else {
+        openTicketPage(newTicketId);
+      }
+    }
+
+    function saveNewUserPassword() {
+      const pass = document.getElementById('new-user-pass-input').value.trim();
+      const phone = localStorage.getItem('kinoshka_user_phone');
+      const nameInput = document.getElementById('user-name').value.trim();
+
+      if (!pass || pass.length < 3) {
+        alert('Пароль должен содержать минимум 3 символа!');
+        return;
+      }
+
+      const userData = { pass: pass, name: nameInput || 'Клиент' };
+
+      if (isFirebaseReady) {
+        db.collection('users').doc(phone).set(userData);
+      } else {
+        usersState[phone] = userData;
+        localStorage.setItem('kinoshka_users', JSON.stringify(usersState));
+      }
+
+      document.getElementById('modal-new-user-pass').classList.remove('active');
+      document.getElementById('new-user-pass-input').value = '';
+      sessionStorage.setItem('kinoshka_client_phone', phone);
+
+      if (pendingTicketForRegId) {
+        const tid = pendingTicketForRegId;
+        pendingTicketForRegId = null;
+        openTicketPage(tid);
+      }
+    }
+
+    function markTicketAwaitingVerification(ticketId) {
+      if (isFirebaseReady) {
+        db.collection('tickets').doc(ticketId).update({ status: 'awaiting' });
+      } else {
+        const t = ticketsState.find(x => x.id === ticketId);
+        if (t) t.status = 'awaiting';
+        setDBLocal('tickets', ticketsState);
+      }
+      openTicketPage(ticketId);
+    }
+
+    function openTicketPage(ticketId) {
+      const ticket = ticketsState.find(t => t.id === ticketId);
+      if (!ticket) return alert('Билет не найден');
+
+      let badgeHtml = '';
+      if (ticket.status === 'pending') badgeHtml = '<span class="badge badge-pending">⏳ ОЖИДАЕТ ОПЛАТЫ</span>';
+      if (ticket.status === 'awaiting') badgeHtml = '<span class="badge badge-awaiting">🔍 ОЖИДАЕТ ПРОВЕРКИ ОПЛАТЫ</span>';
+      if (ticket.status === 'paid') badgeHtml = '<span class="badge badge-paid">✅ ОПЛАТА ПОДТВЕРЖДЕНА</span>';
+      if (ticket.status === 'used') badgeHtml = '<span class="badge badge-used">❌ НЕ АКТУАЛЕН</span>';
+
+      let actionArea = '';
+      if (ticket.status === 'pending' || ticket.status === 'awaiting') {
+        actionArea = `
+          <a href="${MIA_LINK}" target="_blank" class="btn" style="background:#0052cc; margin-top:14px;" onclick="markTicketAwaitingVerification('${ticket.id}')">💳 Оплатить через MIA (${ticket.price} MDL)</a>
+          <button class="btn btn-success" style="margin-top:8px;" onclick="openTicketPage('${ticket.id}')">Я оплатил (Обновить статус)</button>
+        `;
+      } else if (ticket.status === 'paid') {
+        actionArea = `<div id="qrcode"></div><p style="font-size:12px; color:var(--muted);">Покажите QR-код администратору на входе</p>`;
+      }
+
+      document.getElementById('ticket-card-content').innerHTML = `
+        ${badgeHtml}
+        <h2 style="margin: 12px 0 4px 0;">${ticket.movieTitle}</h2>
+        <p style="color:var(--muted); font-size:13px;">📅 ${formatDateShortYear(ticket.date)} в ${ticket.time}</p>
+        <hr style="border:0; border-top:1px solid #333; margin:12px 0;">
+        <p>Билет №: <strong>${ticket.id}</strong></p>
+        <p>Место: <strong>№ ${ticket.seat}</strong> | Имя: ${ticket.userName}</p>
+        <p>К оплате: <strong>${ticket.price} MDL</strong> ${ticket.isFree ? '(10-й бесплатный!)' : ''}</p>
+        ${actionArea}
+      `;
+
+      showPage('page-ticket');
+
+      if (ticket.status === 'paid') {
+        setTimeout(() => {
+          document.getElementById("qrcode").innerHTML = "";
+          new QRCode(document.getElementById("qrcode"), { text: ticket.id, width: 140, height: 140 });
+        }, 100);
+      }
+    }
+
+    function switchClientAuthMode(mode) {
+      if (mode === 'login') {
+        document.getElementById('form-client-login').style.display = 'block';
+        document.getElementById('form-client-register').style.display = 'none';
+        document.getElementById('auth-tab-login').classList.add('active');
+        document.getElementById('auth-tab-register').classList.remove('active');
+      } else {
+        document.getElementById('form-client-login').style.display = 'none';
+        document.getElementById('form-client-register').style.display = 'block';
+        document.getElementById('auth-tab-login').classList.remove('active');
+        document.getElementById('auth-tab-register').classList.add('active');
+      }
+    }
+
+    function checkUserAuthView() {
+      const loggedPhone = sessionStorage.getItem('kinoshka_client_phone');
+      if (loggedPhone) {
+        document.getElementById('user-auth-box').style.display = 'none';
+        document.getElementById('user-tickets-box').style.display = 'block';
+        
+        const u = usersState[loggedPhone];
+        const clientName = (typeof u === 'object') ? (u.name || loggedPhone) : loggedPhone;
+
+        document.getElementById('user-welcome-text').innerText = `Здравствуйте, ${clientName} (${loggedPhone})`;
+        renderUserTickets(loggedPhone);
+      } else {
+        document.getElementById('user-auth-box').style.display = 'block';
+        document.getElementById('user-tickets-box').style.display = 'none';
+      }
+    }
+
+    function processClientLogin() {
+      const phone = document.getElementById('login-phone').value.replace(/\D/g, '');
+      const pass = document.getElementById('login-pass').value.trim();
+
+      if (phone.length !== 9) return alert('Номер телефона должен состоять ровно из 9 цифр!');
+      if (!pass) return alert('Введите пароль!');
+
+      if (usersState[phone]) {
+        const storedPass = (typeof usersState[phone] === 'object') ? usersState[phone].pass : usersState[phone];
+        if (storedPass === pass) {
+          sessionStorage.setItem('kinoshka_client_phone', phone);
+          checkUserAuthView();
+        } else {
+          alert('Неверный пароль для этого номера телефона!');
+        }
+      } else {
+        alert('Пользователь с таким номером не найден. Пожалуйста, зарегистрируйтесь!');
+      }
+    }
+
+    function processClientRegister() {
+      const name = document.getElementById('reg-name').value.trim();
+      const phone = document.getElementById('reg-phone').value.replace(/\D/g, '');
+      const pass = document.getElementById('reg-pass').value.trim();
+
+      if (!name) return alert('Введите ваше имя!');
+      if (phone.length !== 9) return alert('Номер телефона должен состоять ровно из 9 цифр (например, 069123456)!');
+      if (!pass || pass.length < 3) return alert('Введите пароль (не менее 3 символов)!');
+
+      const userData = { pass, name };
+      if (isFirebaseReady) {
+        db.collection('users').doc(phone).set(userData);
+      } else {
+        usersState[phone] = userData;
+        localStorage.setItem('kinoshka_users', JSON.stringify(usersState));
+      }
+
+      sessionStorage.setItem('kinoshka_client_phone', phone);
+      alert('Регистрация успешно завершена!');
+      checkUserAuthView();
+    }
+
+    function logoutUser() {
+      sessionStorage.removeItem('kinoshka_client_phone');
+      checkUserAuthView();
+    }
+
+    function renderUserTickets(phone) {
+      let userTickets = ticketsState.filter(t => (t.phone || '').replace(/\D/g, '') === phone);
+      const list = document.getElementById('my-tickets-list');
+
+      if (userTickets.length === 0) {
+        list.innerHTML = '<p style="color:var(--muted); text-align:center; margin-top:12px;">У вас пока нет купленных билетов</p>';
+        return;
+      }
+
+      userTickets.sort((a, b) => {
+        if (a.status === 'used' && b.status !== 'used') return 1;
+        if (a.status !== 'used' && b.status === 'used') return -1;
+        return 0;
+      });
+
+      list.innerHTML = userTickets.map(t => {
+        let statusLabel = '';
+        let badgeClass = '';
+        if (t.status === 'paid') { statusLabel = 'Оплачен'; badgeClass = 'badge-paid'; }
+        else if (t.status === 'used') { statusLabel = 'Не актуален'; badgeClass = 'badge-used'; }
+        else { statusLabel = 'В ожидании'; badgeClass = 'badge-pending'; }
+
+        return `
+          <div class="card" onclick="openTicketPage('${t.id}')" style="cursor:pointer;">
+            <div style="display:flex; justify-content:space-between; align-items:center;">
+              <strong>${t.movieTitle}</strong>
+              <span class="badge ${badgeClass}">${statusLabel}</span>
+            </div>
+            <p style="color:var(--muted); font-size:12px; margin-top:6px;">📅 ${formatDateShortYear(t.date)} в ${t.time} | Место № ${t.seat}</p>
+          </div>
+        `;
+      }).join('');
+    }
+
+    function switchAdminTab(tabName) {
+      document.querySelectorAll('.admin-tab-content').forEach(el => el.style.display = 'none');
+      document.querySelectorAll('.admin-subnav button').forEach(el => el.classList.remove('active'));
+
+      document.getElementById(`admin-tab-${tabName}`).style.display = 'block';
+      document.getElementById(`tab-btn-${tabName}`).classList.add('active');
+      localStorage.setItem('kinoshka_admin_tab', tabName);
+
+      if (tabName === 'stats') renderPeriodStats();
+      if (tabName === 'clients') renderClientsList();
+      if (tabName === 'promos') renderPromosList();
+    }
+
+    function resetDailyStats() {
+      if (!confirm('Вы уверены, что хотите обнулить дневную статистику?')) return;
+      localStorage.setItem('kinoshka_stats_reset_time', new Date().toISOString());
+      renderAdmin();
+      alert('Дневная статистика обнулена!');
+    }
+
+    function renderAdmin() {
+      const resetTime = localStorage.getItem('kinoshka_stats_reset_time');
+      
+      let relevantTickets = ticketsState.filter(t => t.status === 'paid' || t.status === 'used');
+      if (resetTime) {
+        relevantTickets = relevantTickets.filter(t => new Date(t.createdAt || 0) > new Date(resetTime));
+      }
+
+      const revenue = relevantTickets.reduce((acc, t) => acc + Number(t.price), 0);
+      document.getElementById('stat-revenue').innerText = `${revenue} MDL`;
+      document.getElementById('stat-sold').innerText = relevantTickets.length;
+
+      const sessList = document.getElementById('admin-sessions-list');
+      if (!sessionsState || sessionsState.length === 0) {
+        sessList.innerHTML = '<p style="color:var(--muted); font-size:13px;">Нет активных фильмов</p>';
+      } else {
+        sessList.innerHTML = sessionsState.map(s => `
+          <div class="session-item">
+            <div style="display:flex; gap:12px; align-items:flex-start;">
+              <img src="${s.poster || DEFAULT_POSTER}" style="width:55px; aspect-ratio:2/3; object-fit:cover; border-radius:6px;" onerror="this.src='${DEFAULT_POSTER}'">
+              <div style="flex:1;">
+                <strong style="font-size:15px;">${s.title}</strong>
+                <div class="session-info-vertical">
+                  <div class="session-info-row">${RED_CALENDAR_SVG} <span>${formatDateShortYear(s.date)}</span></div>
+                  <div>⏰ в ${s.time}</div>
+                  <div>🪑 Всего мест: ${s.totalSeats}</div>
+                  <div>💰 ${s.price} MDL</div>
+                </div>
+              </div>
+            </div>
+            <div style="display:flex; gap:8px; margin-top:10px;">
+              <button class="btn btn-secondary btn-sm" onclick="openEditSessionModal('${s.id}')">✏️ Редактировать</button>
+              <button class="btn btn-danger btn-sm" onclick="deleteSession('${s.id}')">🗑️ Удалить сеанс</button>
+            </div>
+          </div>
+        `).join('');
+      }
+
+      const pending = ticketsState.filter(t => t.status === 'pending' || t.status === 'awaiting');
+      const pendList = document.getElementById('admin-pending-list');
+      if (pending.length === 0) {
+        pendList.innerHTML = '<p style="color:var(--muted); font-size:13px;">Нет новых заявок на подтверждение</p>';
+      } else {
+        pendList.innerHTML = pending.map(t => `
+          <div style="border-bottom:1px solid #333; padding:8px 0;">
+            <div><strong>${t.userName}</strong> (${t.phone})</div>
+            <div style="font-size:12px; color:var(--muted);">${t.movieTitle} | Места: № ${t.seat} | ${t.price} MDL</div>
+            <button class="btn btn-success" style="margin-top:6px; padding:8px; font-size:13px;" onclick="confirmPayment('${t.id}')">Подтвердить оплату</button>
+          </div>
+        `).join('');
+      }
+    }
+
+    function renderPeriodStats() {
+      const pickerVal = document.getElementById('stats-date-picker').value;
+      const container = document.getElementById('stats-period-result');
+      const tickets = ticketsState.filter(t => t.status === 'paid' || t.status === 'used');
+
+      const now = new Date();
+      const currentMonthTickets = tickets.filter(t => {
+        const d = new Date(t.date || t.createdAt);
+        return d.getMonth() === now.getMonth() && d.getFullYear() === now.getFullYear();
+      });
+      const monthRev = currentMonthTickets.reduce((acc, t) => acc + Number(t.price), 0);
+
+      let dailyHtml = '';
+      if (pickerVal) {
+        const selectedDateTickets = tickets.filter(t => t.date === pickerVal);
+        const dayRev = selectedDateTickets.reduce((acc, t) => acc + Number(t.price), 0);
+        dailyHtml = `
+          <div class="stat-box" style="margin-bottom:10px; border:1px solid var(--primary);">
+            <div class="num">${dayRev} MDL</div>
+            <div class="lbl">Выручка за выбранную дату (${formatDateShortYear(pickerVal)}) | Продано билетов: ${selectedDateTickets.length}</div>
+          </div>
+        `;
+      }
+
+      container.innerHTML = `
+        ${dailyHtml}
+        <div class="stat-box">
+          <div class="num">${monthRev} MDL</div>
+          <div class="lbl">Выручка за текущий месяц | Всего проданных билетов: ${currentMonthTickets.length}</div>
+        </div>
+      `;
+    }
+
+    function renderClientsList() {
+      const container = document.getElementById('clients-list');
+      const clientsMap = {};
+
+      // 1. Из зарегистрированных в базе
+      Object.keys(usersState).forEach(phone => {
+        const cleanPhone = phone.replace(/\D/g, '');
+        if (!cleanPhone) return;
+        const uInfo = usersState[phone];
+        const name = (typeof uInfo === 'object') ? (uInfo.name || 'Клиент') : 'Клиент';
+        clientsMap[cleanPhone] = { name: name, phone: cleanPhone };
+      });
+
+      // 2. Также подтягиваем всех, кто покупал билеты (теперь у них при покупке тоже создается аккаунт)
+      ticketsState.forEach(t => {
+        const cleanPhone = (t.phone || '').replace(/\D/g, '');
+        if (!cleanPhone) return;
+        if (!clientsMap[cleanPhone]) {
+          clientsMap[cleanPhone] = { name: t.userName || 'Клиент', phone: cleanPhone };
+        }
+      });
+
+      const phones = Object.keys(clientsMap);
+      if (phones.length === 0) {
+        container.innerHTML = '<p style="color:var(--muted); font-size:13px; text-align:center; padding:10px 0;">Клиентов пока нет</p>';
+        return;
+      }
+
+      container.innerHTML = phones.map(phone => {
+        const client = clientsMap[phone];
+        const clientTickets = ticketsState.filter(t => (t.phone || '').replace(/\D/g, '') === phone && (t.status === 'paid' || t.status === 'used'));
+
+        return `
+          <div style="border-bottom:1px solid #333; padding:10px 0;">
+            <div style="display:flex; justify-content:space-between; align-items:center;">
+              <strong style="font-size:15px; color:var(--text);">${client.name}</strong>
+              <span class="badge badge-paid">Зарегистрирован</span>
+            </div>
+            <div style="font-size:13px; color:var(--muted); margin-top:4px;">📞 Телефон: <strong>${client.phone}</strong></div>
+            <div style="font-size:13px; color:var(--accent); margin-top:2px;">🎟️ Количество посещений: <strong>${clientTickets.length}</strong></div>
+          </div>
+        `;
+      }).join('');
+    }
+
+    function renderPromosList() {
+      const container = document.getElementById('promos-list');
+
+      if (!promosState || promosState.length === 0) {
+        container.innerHTML = '<p style="color:var(--muted); font-size:13px;">Промокодов пока нет</p>';
+        return;
+      }
+
+      container.innerHTML = promosState.map(p => `
+        <div style="display:flex; justify-content:space-between; align-items:center; border-bottom:1px solid #333; padding:8px 0;">
+          <strong>🏷️ ${p} (-10 MDL на каждый билет)</strong>
+          <button class="btn btn-danger btn-sm" onclick="deletePromoCode('${p}')">Удалить</button>
+        </div>
+      `).join('');
+    }
+
+    function addPromoCode() {
+      const input = document.getElementById('new-promo-code');
+      const code = input.value.trim().toUpperCase();
+      if (!code) return;
+
+      if (!promosState.includes(code)) {
+        if (isFirebaseReady) {
+          db.collection('promos').doc(code).set({ code });
+        } else {
+          promosState.push(code);
+          setDBLocal('promos', promosState);
+          renderPromosList();
+        }
+        input.value = '';
+      }
+    }
+
+    function deletePromoCode(code) {
+      if (isFirebaseReady) {
+        db.collection('promos').doc(code).delete();
+      } else {
+        promosState = promosState.filter(p => p !== code);
+        setDBLocal('promos', promosState);
+        renderPromosList();
+      }
+    }
+
+    function startCameraScanner() {
+      if (html5QrcodeScanner) {
+        html5QrcodeScanner.clear().catch(() => {});
+      }
+      html5QrcodeScanner = new Html5QrcodeScanner("reader", { 
+        fps: 10, 
+        qrbox: { width: 220, height: 220 },
+        videoConstraints: { facingMode: cameraFacing }
+      });
+      html5QrcodeScanner.render(onScanSuccess);
+    }
+
+    function toggleCamera() {
+      cameraFacing = (cameraFacing === "environment") ? "user" : "environment";
+      startCameraScanner();
+    }
+
+    function scanFromFile(inputEl) {
+      if (!inputEl.files || inputEl.files.length === 0) return;
+      const imageFile = inputEl.files[0];
+      const html5QrCode = new Html5Qrcode("reader");
+
+      html5QrCode.scanFile(imageFile, true)
+        .then(decodedText => processTicketCheck(decodedText))
+        .catch(err => alert("Не удалось распознать QR-код на этом фото"));
+    }
+
+    function createSession() {
+      const title = document.getElementById('new-title').value.trim();
+      const date = document.getElementById('new-date').value;
+      const time = document.getElementById('new-time').value;
+      const price = document.getElementById('new-price').value;
+      const seats = document.getElementById('new-seats').value;
+      const poster = newPosterData || document.getElementById('new-poster').value.trim() || DEFAULT_POSTER;
+
+      if (!title || !date || !time) return alert('Заполните Название, Дату и Время!');
+
+      const id = 's_' + Date.now();
+      const newSession = {
+        title, date, time,
+        price: Number(price) || 50,
+        totalSeats: Number(seats) || 40,
+        poster: poster
+      };
+
+      if (isFirebaseReady) {
+        db.collection('sessions').doc(id).set(newSession);
+      } else {
+        sessionsState.push({ id, ...newSession });
+        setDBLocal('sessions', sessionsState);
+        renderAdmin();
+        renderCatalog();
+      }
+
+      alert('Фильм успешно добавлен!');
+      document.getElementById('new-title').value = '';
+      document.getElementById('new-date').value = '';
+      document.getElementById('new-time').value = '19:30';
+      clearPoster('new');
+    }
+
+    function openEditSessionModal(id) {
+      const session = sessionsState.find(s => s.id === id);
+      if (!session) return;
+
+      document.getElementById('edit-session-id').value = session.id;
+      document.getElementById('edit-title').value = session.title;
+      document.getElementById('edit-date').value = session.date;
+      document.getElementById('edit-time').value = session.time;
+      document.getElementById('edit-price').value = session.price;
+      document.getElementById('edit-seats').value = session.totalSeats;
+      
+      editPosterData = session.poster || '';
+      document.getElementById('edit-poster').value = session.poster && !session.poster.startsWith('data:') ? session.poster : '';
+      updatePosterPreview('edit', session.poster);
+
+      document.getElementById('modal-edit-session').classList.add('active');
+    }
+
+    function closeEditModal() {
+      document.getElementById('modal-edit-session').classList.remove('active');
+    }
+
+    function saveEditedSession() {
+      const id = document.getElementById('edit-session-id').value;
+      const session = sessionsState.find(x => x.id === id);
+
+      if (session) {
+        const textUrl = document.getElementById('edit-poster').value.trim();
+        const updatedData = {
+          title: document.getElementById('edit-title').value.trim(),
+          date: document.getElementById('edit-date').value || session.date,
+          time: document.getElementById('edit-time').value || session.time,
+          price: Number(document.getElementById('edit-price').value) || 50,
+          totalSeats: Number(document.getElementById('edit-seats').value) || 40,
+          poster: editPosterData || textUrl || DEFAULT_POSTER
+        };
+
+        if (isFirebaseReady) {
+          db.collection('sessions').doc(id).update(updatedData);
+        } else {
+          Object.assign(session, updatedData);
+          setDBLocal('sessions', sessionsState);
+          renderAdmin();
+          renderCatalog();
+        }
+
+        closeEditModal();
+        alert('Параметры фильма изменены!');
+      }
+    }
+
+    function deleteSession(id) {
+      if (!confirm('Вы уверены, что хотите полностью удалить этот фильм?')) return;
+      
+      if (isFirebaseReady) {
+        db.collection('sessions').doc(id).delete();
+      } else {
+        sessionsState = sessionsState.filter(s => s.id !== id);
+        setDBLocal('sessions', sessionsState);
+        renderAdmin();
+        renderCatalog();
+      }
+    }
+
+    function changeAdminPin() {
+      const oldPin = document.getElementById('old-pin-input').value.trim();
+      const newPin = document.getElementById('new-pin-input').value.trim();
+
+      if (oldPin !== getAdminPin()) {
+        return alert('Текущий PIN-код введен неверно!');
+      }
+      if (!newPin || newPin.length < 4) {
+        return alert('Новый PIN-код должен содержать минимум 4 символа!');
+      }
+
+      localStorage.setItem('kinoshka_admin_pin', newPin);
+      document.getElementById('old-pin-input').value = '';
+      document.getElementById('new-pin-input').value = '';
+      alert('PIN-код успешно изменен!');
+    }
+
+    function confirmPayment(ticketId) {
+      if (isFirebaseReady) {
+        db.collection('tickets').doc(ticketId).update({ status: 'paid' });
+      } else {
+        const ticket = ticketsState.find(t => t.id === ticketId);
+        if (ticket) ticket.status = 'paid';
+        setDBLocal('tickets', ticketsState);
+        renderAdmin();
+      }
+    }
+
+    function onScanSuccess(ticketId) {
+      processTicketCheck(ticketId);
+    }
+
+    function verifyManualTicket() {
+      const id = document.getElementById('manual-ticket-id').value.trim();
+      if (id) processTicketCheck(id);
+    }
+
+    function processTicketCheck(ticketId) {
+      const ticket = ticketsState.find(t => t.id === ticketId);
+      const res = document.getElementById('scan-result');
+
+      if (!ticket) {
+        res.style.color = '#dc2626';
+        res.innerText = '❌ БИЛЕТ НЕ НАЙДЕН!';
+        return;
+      }
+
+      if (ticket.status === 'used') {
+        const usedTimeFormatted = ticket.usedAt ? new Date(ticket.usedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }) : 'ранее';
+        res.style.color = '#dc2626';
+        res.innerText = `⚠️ БИЛЕТ НЕ АКТУАЛЕН (УЖЕ ИСПОЛЬЗОВАН в ${usedTimeFormatted})!`;
+      } else if (ticket.status === 'pending' || ticket.status === 'awaiting') {
+        res.style.color = '#eab308';
+        res.innerText = '⏳ ОПЛАТА ЕЩЁ НЕ ПОДТВЕРЖДЕНА!';
+      } else if (ticket.status === 'paid') {
+        const nowIso = new Date().toISOString();
+        if (isFirebaseReady) {
+          db.collection('tickets').doc(ticketId).update({ status: 'used', usedAt: nowIso });
+        } else {
+          ticket.status = 'used';
+          ticket.usedAt = nowIso;
+          setDBLocal('tickets', ticketsState);
+          renderAdmin();
+        }
+        
+        // Воспроизводим звуковой сигнал
+        playSuccessSound();
+
+        res.style.color = '#22c55e';
+        res.innerText = `✅ БИЛЕТ ВЕРЕН! (${ticket.movieTitle}, Места № ${ticket.seat})`;
+      }
+    }
+
+    window.onload = function() {
+      initFirebaseListeners();
+      updateNavState();
+      const savedPage = localStorage.getItem('kinoshka_active_page') || 'page-catalog';
+      showPage(savedPage);
+    };
+  </script>
+</body>
+</html>
